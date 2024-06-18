@@ -24,6 +24,9 @@
 #include "detours.h"
 #include "tracebld.h"
 
+#include <string>
+#include <string_view>
+
 #define PULONG_PTR          PVOID
 #define PLONG_PTR           PVOID
 #define ULONG_PTR           PVOID
@@ -64,6 +67,25 @@ static CRITICAL_SECTION s_csPipe;                       // Guards access to hPip
 static HANDLE           s_hPipe = INVALID_HANDLE_VALUE;
 static TBLOG_MESSAGE    s_rMessage;
 
+std::wstring to_wstring(std::string_view string) {
+    try {
+        int size = MultiByteToWideChar(
+            CP_UTF8, 0, (LPCSTR)string.data(), (int)string.length(), NULL, 0
+        );
+        std::wstring wstring(size, 0);
+        MultiByteToWideChar(
+            CP_UTF8, 0, (LPCSTR)string.data(), (int)string.length(),
+            wstring.data(),
+            size
+        );
+        return wstring;
+
+    } catch(...) {
+        // don't try to throw into C code
+        return {};
+    }
+}
+
 // Logging Functions.
 //
 VOID Tblog(PCSTR pszMsgf, ...);
@@ -75,13 +97,9 @@ PCHAR SafePrintf(PCHAR pszBuffer, LONG cbBuffer, PCSTR pszMsg, ...);
 LONG EnterFunc();
 VOID ExitFunc();
 VOID Print(PCSTR psz, ...);
-VOID NoteRead(PCSTR psz);
 VOID NoteRead(PCWSTR pwz);
-VOID NoteWrite(PCSTR psz);
 VOID NoteWrite(PCWSTR pwz);
-VOID NoteDelete(PCSTR psz);
 VOID NoteDelete(PCWSTR pwz);
-VOID NoteCleanup(PCSTR psz);
 VOID NoteCleanup(PCWSTR pwz);
 
 PBYTE LoadFile(HANDLE hFile, DWORD cbFile);
@@ -1088,7 +1106,6 @@ class FileNames
     static VOID Initialize();
     static VOID Dump();
     static FileInfo * FindPartial(PCWSTR pwzPath);
-    static FileInfo * FindPartial(PCSTR pszPath);
     static FileInfo * FindFull(PCWSTR pwzPath);
     static PCWSTR ParameterizeName(PWCHAR pwzDst, DWORD cMaxDst, PCWSTR pwzPath);
     static PCWSTR ParameterizeName(PWCHAR pwzDst, DWORD cMaxDst, FileInfo *pInfo);
@@ -1243,19 +1260,6 @@ FileInfo * FileNames::FindPartial(PCWSTR pwzPath)
     else {
         return FindFull(wzPath);
     }
-}
-
-FileInfo * FileNames::FindPartial(PCSTR pwzPath)
-{
-    WCHAR wzPath[MAX_PATH];
-    PWCHAR pwzFile = wzPath;
-
-    while (*pwzPath) {
-        *pwzFile++ = *pwzPath++;
-    }
-    *pwzFile = '\0';
-
-    return FindPartial(wzPath);
 }
 
 PCWSTR FileNames::ParameterizeName(PWCHAR pwzDst, DWORD cMaxDst, FileInfo *pInfo)
@@ -2505,7 +2509,7 @@ BOOL WINAPI Mine_CreateProcessA(LPCSTR lpApplicationName,
 
     CHAR szProc[MAX_PATH];
     BOOL rv = 0;
-    __try {
+    try {
         LPPROCESS_INFORMATION ppi = lpProcessInformation;
         PROCESS_INFORMATION pi;
         if (ppi == NULL) {
@@ -2563,10 +2567,10 @@ BOOL WINAPI Mine_CreateProcessA(LPCSTR lpApplicationName,
                     }
                     *pszDst++ = '\0';
                 }
-                pInfo = FileNames::FindPartial(szProc);
+                pInfo = FileNames::FindPartial(to_wstring(szProc).c_str());
             }
             else {
-                pInfo = FileNames::FindPartial(lpApplicationName);
+                pInfo = FileNames::FindPartial(to_wstring(lpApplicationName).c_str());
             }
 
             Print("<t:Executable>%ls</t:Executable>\n",
@@ -2586,13 +2590,14 @@ BOOL WINAPI Mine_CreateProcessA(LPCSTR lpApplicationName,
                 Real_CloseHandle(ppi->hProcess);
             }
         }
-    } __finally {
-        ExitFunc();
-        if (!rv) {
-            Print("<!-- Warning: CreateProcessA failed %d: %hs; %hs -->\n",
-                  GetLastError(), lpApplicationName, lpCommandLine);
-        }
+    } catch (...) {}
+    
+    ExitFunc();
+    if (!rv) {
+        Print("<!-- Warning: CreateProcessA failed %d: %hs; %hs -->\n",
+                GetLastError(), lpApplicationName, lpCommandLine);
     }
+
     return rv;
 }
 
@@ -2609,18 +2614,21 @@ BOOL WINAPI Mine_CopyFileExA(LPCSTR a0,
     EnterFunc();
 
     BOOL rv = 0;
-    __try {
+    try {
         rv = Real_CopyFileExA(a0, a1, a2, a3, a4, a5);
-    } __finally {
-        ExitFunc();
-        if (rv) {
+    } catch(...) {
+
+    }
+    
+    ExitFunc();
+    if (rv) {
 #if 0
-            Print("<!-- CopyFileExA %he to %he -->\n", a0, a1);
+        Print("<!-- CopyFileExA %he to %he -->\n", a0, a1);
 #endif
-            NoteRead(a0);
-            NoteWrite(a1);
-        }
-    };
+        NoteRead(to_wstring(a0).c_str());
+        NoteWrite(to_wstring(a1).c_str());
+    }
+    
     return rv;
 }
 
@@ -2663,18 +2671,19 @@ BOOL WINAPI Mine_PrivCopyFileExW(LPCWSTR a0,
     EnterFunc();
 
     BOOL rv = 0;
-    __try {
+    try {
         rv = Real_PrivCopyFileExW(a0, a1, a2, a3, a4, a5);
-    } __finally {
-        ExitFunc();
-        if (rv) {
+    } catch (...) {} 
+
+    ExitFunc();
+    if (rv) {
 #if 0
-            Print("<!-- PrivCopyFileExW %le to %le -->\n", a0, a1);
+        Print("<!-- PrivCopyFileExW %le to %le -->\n", a0, a1);
 #endif
-            NoteRead(a0);
-            NoteWrite(a1);
-        }
-    };
+        NoteRead(a0);
+        NoteWrite(a1);
+    }
+
     return rv;
 }
 
@@ -2685,18 +2694,19 @@ BOOL WINAPI Mine_CreateHardLinkA(LPCSTR a0,
     EnterFunc();
 
     BOOL rv = 0;
-    __try {
+    try {
         rv = Real_CreateHardLinkA(a0, a1, a2);
-    } __finally {
-        ExitFunc();
-        if (rv) {
+    } catch (...) {}
+
+    ExitFunc();
+    if (rv) {
 #if 0
-            Print("<!-- CreateHardLinkA %he to %he -->\n", a0, a1);
+        Print("<!-- CreateHardLinkA %he to %he -->\n", a0, a1);
 #endif
-            NoteRead(a1);
-            NoteWrite(a0);
-        }
-    };
+        NoteRead(to_wstring(a1).c_str());
+        NoteWrite(to_wstring(a0).c_str());
+    }
+
     return rv;
 }
 
@@ -2827,24 +2837,25 @@ BOOL WINAPI Mine_CreatePipe(PHANDLE hReadPipe,
 
     /*int nIndent = */ EnterFunc();
     BOOL rv = 0;
-    __try {
+    try {
         rv = Real_CreatePipe(hReadPipe, hWritePipe, lpPipeAttributes, nSize);
-    } __finally {
-        ExitFunc();
-        if (rv) {
-            CHAR szPipe[128];
+    } catch (...) {}
 
-            SafePrintf(szPipe, ARRAYSIZE(szPipe), "\\\\.\\PIPE\\Temp.%d.%d",
-                       GetCurrentProcessId(),
-                       InterlockedIncrement(&s_nPipeCnt));
+    ExitFunc();
+    if (rv) {
+        CHAR szPipe[128];
 
-            FileInfo *pInfo = FileNames::FindPartial(szPipe);
+        SafePrintf(szPipe, ARRAYSIZE(szPipe), "\\\\.\\PIPE\\Temp.%d.%d",
+                    GetCurrentProcessId(),
+                    InterlockedIncrement(&s_nPipeCnt));
 
-            pInfo->m_fCleanup = TRUE;
-            OpenFiles::Remember(*hReadPipe, pInfo);
-            OpenFiles::Remember(*hWritePipe, pInfo);
-        }
-    };
+        FileInfo *pInfo = FileNames::FindPartial(to_wstring(szPipe).c_str());
+
+        pInfo->m_fCleanup = TRUE;
+        OpenFiles::Remember(*hReadPipe, pInfo);
+        OpenFiles::Remember(*hWritePipe, pInfo);
+    }
+
     return rv;
 }
 
@@ -2882,6 +2893,8 @@ BOOL WINAPI Mine_CreateDirectoryExW(LPCWSTR a0,
     };
     return rv;
 }
+
+// TODO: is CreateFileA missing?
 
 HANDLE WINAPI Mine_CreateFileW(LPCWSTR a0,
                                DWORD access,
@@ -3135,15 +3148,16 @@ BOOL WINAPI Mine_MoveFileWithProgressW(LPCWSTR a0,
     EnterFunc();
 
     BOOL rv = 0;
-    __try {
+    try {
         rv = Real_MoveFileWithProgressW(a0, a1, a2, a3, a4);
-    } __finally {
-        ExitFunc();
-        if (rv) {
-            NoteRead(a0);
-            NoteWrite(a1);
-        }
-    };
+    } catch(...) {}
+
+    ExitFunc();
+    if (rv) {
+        NoteRead(a0);
+        NoteWrite(a1);
+    }
+
     return rv;
 }
 
@@ -3153,16 +3167,17 @@ BOOL WINAPI Mine_MoveFileA(LPCSTR a0,
     EnterFunc();
 
     BOOL rv = 0;
-    __try {
+    try {
         rv = Real_MoveFileA(a0, a1);
-    } __finally {
-        ExitFunc();
-        if (rv) {
-            NoteRead(a0);
-            NoteCleanup(a0);
-            NoteWrite(a1);
-        }
-    };
+    } catch (...) {}
+
+    ExitFunc();
+    if (rv) {
+        NoteRead(to_wstring(a0).c_str());
+        NoteCleanup(to_wstring(a0).c_str());
+        NoteWrite(to_wstring(a1).c_str());
+    }
+    
     return rv;
 }
 
@@ -3172,16 +3187,17 @@ BOOL WINAPI Mine_MoveFileW(LPCWSTR a0,
     EnterFunc();
 
     BOOL rv = 0;
-    __try {
+    try {
         rv = Real_MoveFileW(a0, a1);
-    } __finally {
-        ExitFunc();
-        if (rv) {
-            NoteRead(a0);
-            NoteCleanup(a0);
-            NoteWrite(a1);
-        }
-    };
+    } catch (...) {}
+
+    ExitFunc();
+    if (rv) {
+        NoteRead(a0);
+        NoteCleanup(a0);
+        NoteWrite(a1);
+    }
+
     return rv;
 }
 
@@ -3192,16 +3208,17 @@ BOOL WINAPI Mine_MoveFileExA(LPCSTR a0,
     EnterFunc();
 
     BOOL rv = 0;
-    __try {
+    try {
         rv = Real_MoveFileExA(a0, a1, a2);
-    } __finally {
-        ExitFunc();
-        if (rv) {
-            NoteRead(a0);
-            NoteCleanup(a0);
-            NoteWrite(a1);
-        }
-    };
+    } catch (...) {}
+
+    ExitFunc();
+    if (rv) {
+        NoteRead(to_wstring(a0).c_str());
+        NoteCleanup(to_wstring(a0).c_str());
+        NoteWrite(to_wstring(a1).c_str());
+    }
+
     return rv;
 }
 
@@ -3844,45 +3861,20 @@ LONG DetachDetours(VOID)
 //
 //////////////////////////////////////////////////////////////////////////////
 
-VOID NoteRead(PCSTR psz)
-{
-    FileInfo *pInfo = FileNames::FindPartial(psz);
-    pInfo->m_fRead = TRUE;
-}
-
 VOID NoteRead(PCWSTR pwz)
 {
+    // TODO: check if there is a corresponding .womm file for this file and
+    // check the modification date of its transitive dependencies
     FileInfo *pInfo = FileNames::FindPartial(pwz);
     pInfo->m_fRead = TRUE;
-}
-
-VOID NoteWrite(PCSTR psz)
-{
-    FileInfo *pInfo = FileNames::FindPartial(psz);
-    pInfo->m_fWrite = TRUE;
-    if (!pInfo->m_fRead) {
-        pInfo->m_fCantRead = TRUE;
-    }
 }
 
 VOID NoteWrite(PCWSTR pwz)
 {
+    // TODO: create or replace a .womm file and note the dependencies of the 
+    // written file and this process' invocation and environment
     FileInfo *pInfo = FileNames::FindPartial(pwz);
     pInfo->m_fWrite = TRUE;
-    if (!pInfo->m_fRead) {
-        pInfo->m_fCantRead = TRUE;
-    }
-}
-
-VOID NoteDelete(PCSTR psz)
-{
-    FileInfo *pInfo = FileNames::FindPartial(psz);
-    if (pInfo->m_fWrite || pInfo->m_fRead) {
-        pInfo->m_fCleanup = TRUE;
-    }
-    else {
-        pInfo->m_fDelete = TRUE;
-    }
     if (!pInfo->m_fRead) {
         pInfo->m_fCantRead = TRUE;
     }
@@ -3900,12 +3892,6 @@ VOID NoteDelete(PCWSTR pwz)
     if (!pInfo->m_fRead) {
         pInfo->m_fCantRead = TRUE;
     }
-}
-
-VOID NoteCleanup(PCSTR psz)
-{
-    FileInfo *pInfo = FileNames::FindPartial(psz);
-    pInfo->m_fCleanup = TRUE;
 }
 
 VOID NoteCleanup(PCWSTR pwz)
@@ -4476,7 +4462,7 @@ int WINAPI Mine_EntryPoint(VOID)
         // Get the real executable name.
         wzPath[0] = '\0';
         if (GetModuleFileNameA(0, szExeName, ARRAYSIZE(szExeName))) {
-            FileInfo *pInfo = FileNames::FindPartial(szExeName);
+            FileInfo *pInfo = FileNames::FindPartial(to_wstring(szExeName).c_str());
             Tblog("<t:Executable>%ls</t:Executable>\n",
                   FileNames::ParameterizeName(wzPath, ARRAYSIZE(wzPath), pInfo));
         }

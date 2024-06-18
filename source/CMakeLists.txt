@@ -14,6 +14,7 @@ set_target_properties(
     payload PROPERTIES 
     LINK_FLAGS /EXPORT:DetourFinishHelperProcess,@1,NONAME
 )
+set_property(TARGET payload PROPERTY CXX_STANDARD 17)
 
 target_link_libraries(womm PRIVATE lib_detours)
 add_dependencies(
