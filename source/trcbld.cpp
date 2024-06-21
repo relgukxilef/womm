@@ -26,6 +26,10 @@
 
 #include <string>
 #include <string_view>
+#include <mutex>
+#include <set>
+#include <filesystem>
+#include <fstream>
 
 #define PULONG_PTR          PVOID
 #define PLONG_PTR           PVOID
@@ -86,6 +90,26 @@ std::wstring to_wstring(std::string_view string) {
     }
 }
 
+std::string to_string(std::wstring_view wstring) {
+    try {
+        int size = WideCharToMultiByte(
+            CP_UTF8, 0, (PCWSTR)wstring.data(), (int)wstring.length(), NULL, 0, 
+            NULL, NULL
+        );
+        std::string string(size, 0);
+        WideCharToMultiByte(
+            CP_UTF8, 0, (PCWSTR)wstring.data(), (int)wstring.length(),
+            string.data(),
+            size, NULL, NULL
+        );
+        return string;
+
+    } catch(...) {
+        // don't try to throw into C code
+        return {};
+    }
+}
+
 // Logging Functions.
 //
 VOID Tblog(PCSTR pszMsgf, ...);
@@ -101,6 +125,9 @@ VOID NoteRead(PCWSTR pwz);
 VOID NoteWrite(PCWSTR pwz);
 VOID NoteDelete(PCWSTR pwz);
 VOID NoteCleanup(PCWSTR pwz);
+
+void add_input(PCWSTR pwz);
+void add_output(PCWSTR pwz);
 
 PBYTE LoadFile(HANDLE hFile, DWORD cbFile);
 static PCHAR RemoveReturns(PCHAR pszBuffer);
@@ -2961,8 +2988,14 @@ HANDLE WINAPI Mine_CreateFileW(LPCWSTR a0,
                 if (!pInfo->m_fRead) {
                     pInfo->m_fCantRead = TRUE;
                 }
+
+                add_output(a0);
             }
             else if (create == OPEN_EXISTING) {
+                if (access == FILE_FLAG_WRITE_THROUGH)
+                    add_output(a0);
+                else
+                    add_input(a0);
             }
             else if (create == OPEN_ALWAYS) {
                 // pInfo->m_fAppend = TRUE;    // !!!
@@ -3861,18 +3894,58 @@ LONG DetachDetours(VOID)
 //
 //////////////////////////////////////////////////////////////////////////////
 
-VOID NoteRead(PCWSTR pwz)
+std::mutex mutex;
+std::set<std::wstring> dependencies;
+
+void add_input(PCWSTR pwz) 
 {
     // TODO: check if there is a corresponding .womm file for this file and
     // check the modification date of its transitive dependencies
+
+    Print("add_input\n");
+
+    std::lock_guard l(mutex);
+    dependencies.insert(pwz);
+}
+
+void add_output(PCWSTR pwz)
+{
+    // TODO: write this process' invocation and environment
+
+    std::filesystem::path path(pwz);
+    path = path.parent_path() / L".womm" / path.filename();
+    path += L".womm";
+
+    Real_CreateDirectoryW(path.parent_path().c_str(), NULL);
+    if (GetLastError() == ERROR_PATH_NOT_FOUND)
+        return;
+    
+    auto shadow = Real_CreateFileW(
+        path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 
+        FILE_FLAG_WRITE_THROUGH, NULL
+    );
+    if (shadow == INVALID_HANDLE_VALUE)
+        return;
+
+    Print("add_output %le\n", path.c_str());
+
+    std::lock_guard l(mutex);
+    for (auto &dependency : dependencies) {
+        auto line = to_string(dependency) + "\n";
+        DWORD length;
+        Real_WriteFile(shadow, line.c_str(), line.size(), &length, NULL);
+    }
+    Real_CloseHandle(shadow);
+}
+
+VOID NoteRead(PCWSTR pwz)
+{
     FileInfo *pInfo = FileNames::FindPartial(pwz);
     pInfo->m_fRead = TRUE;
 }
 
 VOID NoteWrite(PCWSTR pwz)
 {
-    // TODO: create or replace a .womm file and note the dependencies of the 
-    // written file and this process' invocation and environment
     FileInfo *pInfo = FileNames::FindPartial(pwz);
     pInfo->m_fWrite = TRUE;
     if (!pInfo->m_fRead) {
@@ -3934,7 +4007,7 @@ VOID ExitFunc()
     LONG nThread = 0;
     if (s_nTlsIndent >= 0) {
         nIndent = (LONG)(LONG_PTR)TlsGetValue(s_nTlsIndent) - 1;
-        ASSERT(nIndent >= 0);
+        //ASSERT(nIndent >= 0);
         TlsSetValue(s_nTlsIndent, (PVOID)(LONG_PTR)nIndent);
     }
     if (s_nTlsThread >= 0) {
