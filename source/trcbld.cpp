@@ -3897,16 +3897,72 @@ LONG DetachDetours(VOID)
 
 std::mutex mutex;
 std::set<std::wstring> dependencies;
+std::set<std::wstring> dependenciesChecked;
+
+void check_input(PCWSTR pwz, FILETIME dependeeLastWriteTime)
+{
+    if (!dependenciesChecked.insert(pwz).second)
+        return;
+    FILETIME lastWriteTime;
+    auto file = Real_CreateFileW(
+        pwz, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 
+        FILE_ATTRIBUTE_NORMAL, NULL
+    );
+    if (file == INVALID_HANDLE_VALUE)
+        return;
+    GetFileTime(file, NULL, NULL, &lastWriteTime);
+    Real_CloseHandle(file);
+
+    if (CompareFileTime(&lastWriteTime, &dependeeLastWriteTime) > 0) {
+        Print("Stale input file %le\n", pwz);
+        return;
+    }
+
+    std::filesystem::path path(pwz);
+    path = path.parent_path() / L".womm" / path.filename();
+    path += L".womm";
+
+    auto shadow = Real_CreateFileW(
+        path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 
+        FILE_FLAG_SEQUENTIAL_SCAN, NULL
+    );
+    if (shadow == INVALID_HANDLE_VALUE)
+        return;
+
+    DWORD bufferSize = 4096;
+    auto buffer = std::make_unique<char[]>(bufferSize);
+    std::string line;
+    while (
+        Real_ReadFile(shadow, buffer.get(), bufferSize, &bufferSize, NULL) &&
+        bufferSize > 0
+    ) {
+        auto start = buffer.get();
+        auto end = start;
+        while (end != buffer.get() + bufferSize) {
+            for (; end != buffer.get() + bufferSize && *end != '\n'; end++);
+            line.append(start, end);
+            if (*end == '\n') {
+                check_input(
+                    to_wstring(line.substr(0, line.size() - 1)).c_str(),
+                    lastWriteTime
+                );
+                line.clear();
+                end++;
+                start = end;
+            }
+        }
+    }
+    Real_CloseHandle(shadow);
+}
 
 void add_input(PCWSTR pwz) 
 {
-    // TODO: check if there is a corresponding .womm file for this file and
-    // check the modification date of its transitive dependencies
+    {
+        std::lock_guard l(mutex);
+        dependencies.insert(pwz);
 
-    Print("add_input\n");
-
-    std::lock_guard l(mutex);
-    dependencies.insert(pwz);
+        check_input(pwz, {~0u, ~0u});
+    }
 }
 
 void add_output(PCWSTR pwz)
@@ -3927,8 +3983,6 @@ void add_output(PCWSTR pwz)
     );
     if (shadow == INVALID_HANDLE_VALUE)
         return;
-
-    Print("add_output %le\n", path.c_str());
 
     std::lock_guard l(mutex);
     for (auto &dependency : dependencies) {
