@@ -1561,6 +1561,7 @@ class OpenFiles
     {
         SLOT& slot = HashToSlot(hFile);
         if (slot.m_hHandle == hFile) {
+            add_input(slot.m_pFile->m_pwzPath);
             slot.m_pFile->m_fRead = TRUE;
             slot.m_pFile->m_cbRead += cbData;
         }
@@ -2772,6 +2773,8 @@ BOOL WINAPI Mine_CloseHandle(HANDLE a0)
 
         FileInfo * pFile = OpenFiles::RecallFile(a0);
         if (pFile != NULL) {
+            if (pFile->m_fWrite)
+                add_output(pFile->m_pwzPath);
             DWORD dwErr = GetLastError();
             pFile->m_cbContent = GetFileSize(a0, NULL);
             if (pFile->m_cbContent == INVALID_FILE_SIZE) {
@@ -2937,7 +2940,7 @@ HANDLE WINAPI Mine_CreateFileW(LPCWSTR a0,
         rv = Real_CreateFileW(a0, access, share, a3, create, flags, a6);
     } __finally {
         ExitFunc();
-#if 0
+#if 1
             Print("<!-- CreateFileW(%le, ac=%08x, cr=%08x, fl=%08x -->\n",
                   a0,
                   access,
@@ -2988,17 +2991,12 @@ HANDLE WINAPI Mine_CreateFileW(LPCWSTR a0,
                 if (!pInfo->m_fRead) {
                     pInfo->m_fCantRead = TRUE;
                 }
-
-                add_output(a0);
             }
             else if (create == OPEN_EXISTING) {
-                if (access == FILE_FLAG_WRITE_THROUGH)
-                    add_output(a0);
-                else
-                    add_input(a0);
+                add_input(a0);
             }
-            else if (create == OPEN_ALWAYS) {
-                // pInfo->m_fAppend = TRUE;    // !!!
+            else {
+                add_input(a0);
             }
 
             if ((flags & FILE_FLAG_DELETE_ON_CLOSE)) {
@@ -3048,6 +3046,9 @@ HANDLE WINAPI Mine_CreateFileMappingW(HANDLE hFile,
                     pInfo->m_fWrite = TRUE;
                     break;
                 }
+
+                if (pInfo->m_fRead)
+                    add_input(pInfo->m_pwzPath);
             }
         }
     };
