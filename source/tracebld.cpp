@@ -482,7 +482,7 @@ DWORD main(int argc, char **argv)
     }
 
     StringCchCopyA(pszFilePart, szExePath + ARRAYSIZE(szExePath) - pszFilePart,
-             "payload.dll");
+             "womm_hook" DETOURS_STRINGIFY(DETOURS_BITS) ".dll");
     StringCchCopyA(szDllPath, ARRAYSIZE(szDllPath), szExePath);
 
     //////////////////////////////////////////////////////////////////////////
