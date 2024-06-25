@@ -52,6 +52,7 @@ jobs:
   
     - name: Configure CMake
       run: >
+        rm ${{ steps.strings.outputs.build-output-dir }}/CMakeCache.txt &&
         cmake -A Win64 -B ${{ steps.strings.outputs.build-output-dir }}
         -DCMAKE_CXX_COMPILER=${{ matrix.c_compiler }}
         -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
