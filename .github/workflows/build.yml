@@ -41,7 +41,7 @@ jobs:
 
     - name: Configure CMake
       run: >
-        cmake -A x32 -B ${{ steps.strings.outputs.build-output-dir }}
+        cmake -A Win32 -B ${{ steps.strings.outputs.build-output-dir }}
         -DCMAKE_CXX_COMPILER=${{ matrix.c_compiler }}
         -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
@@ -52,7 +52,7 @@ jobs:
   
     - name: Configure CMake
       run: >
-        cmake -A x64 -B ${{ steps.strings.outputs.build-output-dir }}
+        cmake -A Win64 -B ${{ steps.strings.outputs.build-output-dir }}
         -DCMAKE_CXX_COMPILER=${{ matrix.c_compiler }}
         -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
