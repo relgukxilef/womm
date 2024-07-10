@@ -3943,7 +3943,7 @@ void check_input(PCWSTR pwz, FILETIME dependeeLastWriteTime)
             line.append(start, end);
             if (*end == '\n') {
                 check_input(
-                    to_wstring(line.substr(0, line.size() - 1)).c_str(),
+                    to_wstring(line.substr(0, line.size())).c_str(),
                     lastWriteTime
                 );
                 line.clear();
@@ -3959,6 +3959,8 @@ void add_input(PCWSTR pwz)
 {
     try
     {
+        if (GetFileAttributesW(pwz) & FILE_ATTRIBUTE_DIRECTORY)
+            return;
         std::lock_guard l(mutex);
         dependencies.insert(pwz);
 
@@ -3992,11 +3994,21 @@ void add_output(PCWSTR pwz)
             return;
 
         std::lock_guard l(mutex);
+        DWORD length;
+        std::string line;
         for (auto &dependency : dependencies) {
-            auto line = to_string(dependency) + "\n";
-            DWORD length;
+            line = to_string(dependency) + "\n";
             Real_WriteFile(shadow, line.c_str(), line.size(), &length, NULL);
         }
+
+        line = "\n" + to_string(GetCommandLineW()) + "\n";
+        Real_WriteFile(shadow, line.c_str(), line.size(), &length, NULL);
+        WCHAR file_name[MAX_PATH];
+        if (GetModuleFileNameW(0, file_name, std::size(file_name))) {
+            line = to_string(file_name) + "\n";
+            Real_WriteFile(shadow, line.c_str(), line.size(), &length, NULL);
+        }
+
         Real_CloseHandle(shadow);
     }
     catch (...)
