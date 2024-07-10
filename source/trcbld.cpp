@@ -3957,40 +3957,52 @@ void check_input(PCWSTR pwz, FILETIME dependeeLastWriteTime)
 
 void add_input(PCWSTR pwz) 
 {
+    try
     {
         std::lock_guard l(mutex);
         dependencies.insert(pwz);
 
         check_input(pwz, {~0u, ~0u});
     }
+    catch (...) 
+    {
+
+    }
 }
 
 void add_output(PCWSTR pwz)
 {
-    // TODO: write this process' invocation and environment
+    try
+    {
+        // TODO: write this process' invocation and environment
 
-    std::filesystem::path path(pwz);
-    path = path.parent_path() / L".womm" / path.filename();
-    path += L".womm";
+        std::filesystem::path path(pwz);
+        path = path.parent_path() / L".womm" / path.filename();
+        path += L".womm";
 
-    Real_CreateDirectoryW(path.parent_path().c_str(), NULL);
-    if (GetLastError() == ERROR_PATH_NOT_FOUND)
-        return;
-    
-    auto shadow = Real_CreateFileW(
-        path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 
-        FILE_FLAG_WRITE_THROUGH, NULL
-    );
-    if (shadow == INVALID_HANDLE_VALUE)
-        return;
+        Real_CreateDirectoryW(path.parent_path().c_str(), NULL);
+        if (GetLastError() == ERROR_PATH_NOT_FOUND)
+            return;
+        
+        auto shadow = Real_CreateFileW(
+            path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 
+            FILE_FLAG_WRITE_THROUGH, NULL
+        );
+        if (shadow == INVALID_HANDLE_VALUE)
+            return;
 
-    std::lock_guard l(mutex);
-    for (auto &dependency : dependencies) {
-        auto line = to_string(dependency) + "\n";
-        DWORD length;
-        Real_WriteFile(shadow, line.c_str(), line.size(), &length, NULL);
+        std::lock_guard l(mutex);
+        for (auto &dependency : dependencies) {
+            auto line = to_string(dependency) + "\n";
+            DWORD length;
+            Real_WriteFile(shadow, line.c_str(), line.size(), &length, NULL);
+        }
+        Real_CloseHandle(shadow);
     }
-    Real_CloseHandle(shadow);
+    catch (...)
+    {
+
+    }
 }
 
 VOID NoteRead(PCWSTR pwz)
