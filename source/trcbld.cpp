@@ -3942,6 +3942,8 @@ void check_input(PCWSTR pwz, FILETIME dependeeLastWriteTime)
             for (; end != buffer.get() + bufferSize && *end != '\n'; end++);
             line.append(start, end);
             if (*end == '\n') {
+                if (line.size() == 0)
+                    return;
                 check_input(
                     to_wstring(line.substr(0, line.size())).c_str(),
                     lastWriteTime
