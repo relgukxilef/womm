@@ -20,6 +20,8 @@ set_property(
     TARGET womm_hook PROPERTY OUTPUT_NAME womm_hook${arch_bit}
 )
 
+target_compile_options(womm_hook PRIVATE /EHac)
+
 target_link_libraries(womm PRIVATE lib_detours)
 add_dependencies(
     womm

@@ -2618,9 +2618,11 @@ BOOL WINAPI Mine_CreateProcessA(LPCSTR lpApplicationName,
                 Real_CloseHandle(ppi->hProcess);
             }
         }
-    } catch (...) {}
+    } catch (...) {
+        ExitFunc();
+        throw;
+    }
     
-    ExitFunc();
     if (!rv) {
         Print("<!-- Warning: CreateProcessA failed %d: %hs; %hs -->\n",
                 GetLastError(), lpApplicationName, lpCommandLine);
@@ -2645,10 +2647,10 @@ BOOL WINAPI Mine_CopyFileExA(LPCSTR a0,
     try {
         rv = Real_CopyFileExA(a0, a1, a2, a3, a4, a5);
     } catch(...) {
-
+        ExitFunc();
+        throw;
     }
     
-    ExitFunc();
     if (rv) {
 #if 0
         Print("<!-- CopyFileExA %he to %he -->\n", a0, a1);
@@ -2701,9 +2703,11 @@ BOOL WINAPI Mine_PrivCopyFileExW(LPCWSTR a0,
     BOOL rv = 0;
     try {
         rv = Real_PrivCopyFileExW(a0, a1, a2, a3, a4, a5);
-    } catch (...) {} 
+    } catch (...) {
+        ExitFunc();
+        throw;
+    } 
 
-    ExitFunc();
     if (rv) {
 #if 0
         Print("<!-- PrivCopyFileExW %le to %le -->\n", a0, a1);
@@ -2724,9 +2728,11 @@ BOOL WINAPI Mine_CreateHardLinkA(LPCSTR a0,
     BOOL rv = 0;
     try {
         rv = Real_CreateHardLinkA(a0, a1, a2);
-    } catch (...) {}
+    } catch (...) {
+        ExitFunc();
+        throw;
+    }
 
-    ExitFunc();
     if (rv) {
 #if 0
         Print("<!-- CreateHardLinkA %he to %he -->\n", a0, a1);
@@ -2869,9 +2875,11 @@ BOOL WINAPI Mine_CreatePipe(PHANDLE hReadPipe,
     BOOL rv = 0;
     try {
         rv = Real_CreatePipe(hReadPipe, hWritePipe, lpPipeAttributes, nSize);
-    } catch (...) {}
+    } catch (...) {
+        ExitFunc();
+        throw;
+    }
 
-    ExitFunc();
     if (rv) {
         CHAR szPipe[128];
 
@@ -3184,9 +3192,11 @@ BOOL WINAPI Mine_MoveFileWithProgressW(LPCWSTR a0,
     BOOL rv = 0;
     try {
         rv = Real_MoveFileWithProgressW(a0, a1, a2, a3, a4);
-    } catch(...) {}
+    } catch(...) {
+        ExitFunc();
+        throw;
+    }
 
-    ExitFunc();
     if (rv) {
         NoteRead(a0);
         NoteWrite(a1);
@@ -3203,9 +3213,11 @@ BOOL WINAPI Mine_MoveFileA(LPCSTR a0,
     BOOL rv = 0;
     try {
         rv = Real_MoveFileA(a0, a1);
-    } catch (...) {}
+    } catch (...) {
+        ExitFunc();
+        throw;
+    }
 
-    ExitFunc();
     if (rv) {
         NoteRead(to_wstring(a0).c_str());
         NoteCleanup(to_wstring(a0).c_str());
@@ -3223,9 +3235,11 @@ BOOL WINAPI Mine_MoveFileW(LPCWSTR a0,
     BOOL rv = 0;
     try {
         rv = Real_MoveFileW(a0, a1);
-    } catch (...) {}
+    } catch (...) {
+        ExitFunc();
+        throw;
+    }
 
-    ExitFunc();
     if (rv) {
         NoteRead(a0);
         NoteCleanup(a0);
@@ -3244,9 +3258,11 @@ BOOL WINAPI Mine_MoveFileExA(LPCSTR a0,
     BOOL rv = 0;
     try {
         rv = Real_MoveFileExA(a0, a1, a2);
-    } catch (...) {}
+    } catch (...) {
+        ExitFunc();
+        throw;
+    }
 
-    ExitFunc();
     if (rv) {
         NoteRead(to_wstring(a0).c_str());
         NoteCleanup(to_wstring(a0).c_str());
