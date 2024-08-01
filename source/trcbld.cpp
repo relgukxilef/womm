@@ -3973,16 +3973,27 @@ void check_input(PCWSTR pwz, FILETIME dependeeLastWriteTime)
     Real_CloseHandle(shadow);
 }
 
-void add_input(PCWSTR pwz) 
+std::wstring full_path_name(PCWSTR pwz) 
+{
+    auto path_length = GetFullPathNameW(pwz, 0, nullptr, nullptr);
+    std::wstring path(path_length, 0);
+    GetFullPathNameW(pwz, path_length + 1, path.data(), nullptr);
+    return path;
+}
+
+void add_input(PCWSTR pwz)
 {
     try
     {
         if (GetFileAttributesW(pwz) & FILE_ATTRIBUTE_DIRECTORY)
             return;
-        std::lock_guard l(mutex);
-        dependencies.insert(pwz);
 
-        check_input(pwz, {~0u, ~0u});
+        auto path = full_path_name(pwz);
+
+        std::lock_guard l(mutex);
+        dependencies.insert(path.c_str());
+
+        check_input(path.c_str(), {~0u, ~0u});
     }
     catch (...) 
     {
@@ -3996,7 +4007,7 @@ void add_output(PCWSTR pwz)
     {
         // TODO: write this process' invocation and environment
 
-        std::filesystem::path path(pwz);
+        std::filesystem::path path(full_path_name(pwz));
         path = path.parent_path() / L".womm" / path.filename();
         path += L".womm";
 
