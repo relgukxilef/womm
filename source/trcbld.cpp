@@ -3975,9 +3975,12 @@ void check_input(PCWSTR pwz, FILETIME dependeeLastWriteTime)
 
 std::wstring full_path_name(PCWSTR pwz) 
 {
-    auto path_length = GetFullPathNameW(pwz, 0, nullptr, nullptr);
-    std::wstring path(path_length, 0);
-    GetFullPathNameW(pwz, path_length + 1, path.data(), nullptr);
+    auto length = GetFullPathNameW(pwz, 0, nullptr, nullptr);
+    // length includes 0 byte
+    std::wstring path(length, 0);
+    length = GetFullPathNameW(pwz, length, path.data(), nullptr);
+    // length does not include 0 byte
+    path.resize(length);
     return path;
 }
 
