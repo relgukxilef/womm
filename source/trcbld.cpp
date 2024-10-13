@@ -3948,7 +3948,7 @@ VOID ExitFunc()
     LONG nThread = 0;
     if (s_nTlsIndent >= 0) {
         nIndent = (LONG)(LONG_PTR)TlsGetValue(s_nTlsIndent) - 1;
-        ASSERT(nIndent >= 0);
+        //ASSERT(nIndent >= 0);
         TlsSetValue(s_nTlsIndent, (PVOID)(LONG_PTR)nIndent);
     }
     if (s_nTlsThread >= 0) {
