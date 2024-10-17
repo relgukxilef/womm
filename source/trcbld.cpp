@@ -14,6 +14,7 @@
 #define DBG_TRACE   0
 
 #include <windows.h>
+#include <wchar.h>
 #include <stdio.h>
 #pragma warning(push)
 #if _MSC_VER > 1400
@@ -63,6 +64,59 @@ static LONG s_nChildCnt = 0;
 static CRITICAL_SECTION s_csPipe;                       // Guards access to hPipe.
 static HANDLE           s_hPipe = INVALID_HANDLE_VALUE;
 static TBLOG_MESSAGE    s_rMessage;
+
+struct path {
+    path() = default;
+    path(WCHAR* pointer, unsigned length) : pointer(pointer), length(length) {}
+    path(WCHAR* string) : 
+        pointer(string), length((WCHAR*)wmemchr(string, 0, ~0) - string) 
+    {}
+    WCHAR* pointer = NULL;
+    unsigned length = 0;
+};
+
+struct unique_path {
+    unique_path() noexcept {}
+    unique_path(unsigned length) : 
+        p{(WCHAR*)GlobalAlloc(0, length * sizeof(WCHAR)), length} 
+    {}
+    unique_path(unique_path&& other) noexcept : p(other.p) { other.p = {}; }
+    unique_path(const unique_path& other) : unique_path(other.p.length) {
+        if (p.pointer)
+            wmemcpy(p.pointer, other.p.pointer, p.length);
+    }
+    ~unique_path() {
+        if (p.pointer)
+            GlobalFree(p.pointer);
+    }
+    void swap(unique_path& other) noexcept {
+        path temp = p;
+        p = other.p;
+        other.p = temp;
+    }
+    unique_path& operator=(unique_path other) noexcept {
+        swap(other);
+        return *this;
+    }
+    path p;
+};
+
+unique_path command_line;
+
+unique_path get_meta_file(const WCHAR* a0) {
+    auto path_size = GetFullPathNameW(a0, 0, NULL, NULL);
+    auto size = path_size + sizeof(L".womm\\.womm") / sizeof(WCHAR);
+    unique_path shadow(size);
+    WCHAR* file_name;
+    GetFullPathNameW(a0, shadow.p.length, shadow.p.pointer, &file_name);
+    wmemmove(
+        file_name + 6, file_name, shadow.p.pointer + path_size - file_name
+    );
+    wmemcpy(file_name, L".womm\\", 6);
+    // TODO: why is the file extension not added?
+    wmemcpy(shadow.p.pointer + shadow.p.length - 6, L".womm", 6);
+    return shadow;
+}
 
 // Logging Functions.
 //
@@ -1428,6 +1482,46 @@ VOID FileNames::Dump()
             // Discard do "none" files.
             continue;
         }
+
+        if (fWrite) {
+            auto shadow = get_meta_file(wzPath);
+            auto last_slash = wcsrchr(shadow.p.pointer, L'\\');
+            *last_slash = L'\0';
+            Real_CreateDirectoryW(shadow.p.pointer, NULL);
+            *last_slash = L'\\';
+            if (GetLastError() != ERROR_PATH_NOT_FOUND) {
+                auto shadow_file = Real_CreateFileW(
+                    shadow.p.pointer, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 
+                    FILE_FLAG_WRITE_THROUGH, NULL
+                );
+
+                Real_WriteFile(
+                    shadow_file, command_line.p.pointer, 
+                    command_line.p.length * 2, 
+                    NULL, NULL
+                );
+                Real_WriteFile(
+                    shadow_file, L"\n", 2, NULL, NULL
+                );
+
+                for (DWORD m = 0; m < s_nFiles; m++) {
+                    auto dependency = pSorted[m];
+                    if (dependency->m_cbRead) {
+                        Real_WriteFile(
+                            shadow_file, dependency->m_pwzPath, 
+                            path((WCHAR*)dependency->m_pwzPath).length * 2, 
+                            NULL, NULL
+                        );
+                        Real_WriteFile(
+                            shadow_file, L"\n", 2, NULL, NULL
+                        );
+                    }
+                }
+
+                Real_CloseHandle(shadow_file);
+            }
+        }
+
 
         if (pInfo->m_pbContent == NULL ||
             pInfo->m_fDelete ||
@@ -2883,6 +2977,15 @@ BOOL WINAPI Mine_CreateDirectoryExW(LPCWSTR a0,
     return rv;
 }
 
+void check_dependencies(LPCWSTR a0) noexcept {
+    return;
+    // TODO: check dependencies
+    auto shadow_file = Real_CreateFileW(
+        get_meta_file(a0).p.pointer, GENERIC_READ, FILE_SHARE_READ, NULL, 
+        OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL
+    );
+}
+
 HANDLE WINAPI Mine_CreateFileW(LPCWSTR a0,
                                DWORD access,
                                DWORD share,
@@ -2892,17 +2995,24 @@ HANDLE WINAPI Mine_CreateFileW(LPCWSTR a0,
                                HANDLE a6)
 {
     /* int nIndent = */ EnterFunc();
+
+    if (create == OPEN_EXISTING) {
+        check_dependencies(a0);
+    }
+
     HANDLE rv = 0;
     __try {
         rv = Real_CreateFileW(a0, access, share, a3, create, flags, a6);
     } __finally {
         ExitFunc();
-#if 0
-            Print("<!-- CreateFileW(%le, ac=%08x, cr=%08x, fl=%08x -->\n",
-                  a0,
-                  access,
-                  create,
-                  flags);
+#if 1
+        Print(
+            "<!-- CreateFileW(%le, ac=%08x, cr=%08x, fl=%08x -->\n",
+            a0,
+            access,
+            create,
+            flags
+        );
 #endif
 
         if (access != 0 && /* nIndent == 0 && */ rv != INVALID_HANDLE_VALUE) {
@@ -4499,6 +4609,14 @@ int WINAPI Mine_EntryPoint(VOID)
         else {
             Tblog("<t:Line>%le %le</t:Line>\n", wzPath, pwzFin);
         }
+
+        auto path_length = wcsrchr(wzPath, L'\0') - wzPath;
+        auto argument_length = wcsrchr(pwzFin, L'\0') - pwzFin;
+        command_line = unique_path(1 + path_length + 2 + argument_length);
+        command_line.p.pointer[0] = L'"';
+        wmemcpy(command_line.p.pointer + 1, wzPath, path_length);
+        wmemcpy(command_line.p.pointer + 1 + path_length, L"\" ", 2);
+        wmemcpy(command_line.p.pointer + 1 + path_length + 2, pwzFin, argument_length);
 
         TestHandle("t:StdIn", GetStdHandle(STD_INPUT_HANDLE));
         TestHandle("t:StdOut", GetStdHandle(STD_OUTPUT_HANDLE));
