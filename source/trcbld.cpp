@@ -65,6 +65,8 @@ static CRITICAL_SECTION s_csPipe;                       // Guards access to hPip
 static HANDLE           s_hPipe = INVALID_HANDLE_VALUE;
 static TBLOG_MESSAGE    s_rMessage;
 
+VOID Print(const CHAR *psz, ...);
+
 struct path {
     path() = default;
     path(WCHAR* pointer, unsigned length) : pointer(pointer), length(length) {}
@@ -97,6 +99,18 @@ struct unique_path {
     unique_path& operator=(unique_path other) noexcept {
         swap(other);
         return *this;
+    }
+    void append(const WCHAR *begin, const WCHAR *end) {
+        auto length = (unsigned)(p.length + end - begin);
+        auto pointer = (WCHAR*)GlobalReAlloc(
+            p.pointer, length * sizeof(WCHAR), GMEM_MOVEABLE
+        );
+        if (pointer) {
+            p = {pointer, length};
+            wmemcpy(p.pointer, begin, end - begin);
+        } else {
+            Print("Allocation failed\n");
+        }
     }
     path p;
 };
@@ -1495,15 +1509,6 @@ VOID FileNames::Dump()
                     FILE_FLAG_WRITE_THROUGH, NULL
                 );
 
-                Real_WriteFile(
-                    shadow_file, command_line.p.pointer, 
-                    command_line.p.length * 2, 
-                    NULL, NULL
-                );
-                Real_WriteFile(
-                    shadow_file, L"\n", 2, NULL, NULL
-                );
-
                 for (DWORD m = 0; m < s_nFiles; m++) {
                     auto dependency = pSorted[m];
                     if (dependency->m_cbRead) {
@@ -1517,6 +1522,18 @@ VOID FileNames::Dump()
                         );
                     }
                 }
+
+                Real_WriteFile(
+                    shadow_file, L"\n", 2, NULL, NULL
+                );
+                Real_WriteFile(
+                    shadow_file, command_line.p.pointer, 
+                    command_line.p.length * 2, 
+                    NULL, NULL
+                );
+                Real_WriteFile(
+                    shadow_file, L"\n", 2, NULL, NULL
+                );
 
                 Real_CloseHandle(shadow_file);
             }
@@ -2977,13 +2994,69 @@ BOOL WINAPI Mine_CreateDirectoryExW(LPCWSTR a0,
     return rv;
 }
 
-void check_dependencies(LPCWSTR a0) noexcept {
-    return;
-    // TODO: check dependencies
+bool dependency_stale(LPCWSTR a0, FILETIME dependeeLastWriteTime={~0u, ~0u}) {
+    Print("Checking %le\n", a0);
+    FILETIME lastWriteTime;
+    auto file = Real_CreateFileW(
+        a0, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 
+        FILE_ATTRIBUTE_NORMAL, NULL
+    );
+    if (file == INVALID_HANDLE_VALUE) {
+        Print("Dependency doesn't exist\n");
+        return true;
+    }
+    GetFileTime(file, NULL, NULL, &lastWriteTime);
+    Real_CloseHandle(file);
+
+    if (CompareFileTime(&lastWriteTime, &dependeeLastWriteTime) > 0) {
+        Print("Dependency is stale\n");
+        return true;
+    }
+
+    auto shadow = get_meta_file(a0);
+
     auto shadow_file = Real_CreateFileW(
-        get_meta_file(a0).p.pointer, GENERIC_READ, FILE_SHARE_READ, NULL, 
+        shadow.p.pointer, GENERIC_READ, FILE_SHARE_READ, NULL, 
         OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL
     );
+    if (shadow_file == INVALID_HANDLE_VALUE) {
+        Print("File is not generated during build\n");
+        return false;
+    }
+    
+    DWORD charBufferSize = 4096;
+    CHAR charBuffer[4096];
+    unique_path line(256);
+    while (
+        Real_ReadFile(
+            shadow_file, charBuffer, charBufferSize, &charBufferSize, NULL
+        ) &&
+        charBufferSize > 0
+    ) {
+        WCHAR *buffer = (WCHAR*)charBuffer;
+        auto start = buffer;
+        auto end = start;
+        DWORD bufferSize = charBufferSize / sizeof(WCHAR);
+        while (end != buffer + bufferSize) {
+            for (; end != buffer + bufferSize && *end != L'\n'; end++);
+            line.append(start, end);
+            if (*end == L'\n') {
+                if (line.p.length == 0)
+                    break;
+                *end = L'\0';
+                if (dependency_stale(line.p.pointer, lastWriteTime)) {
+                    Print("Dependency is stale\n");
+                    return true;
+                }
+                line.p.length = 0;
+                end++;
+                start = end;
+            }
+        }
+    }
+    Print("All dependencies up-to-date\n");
+    Real_CloseHandle(shadow_file); // TODO: put into destructor
+    return false;
 }
 
 HANDLE WINAPI Mine_CreateFileW(LPCWSTR a0,
@@ -2997,7 +3070,9 @@ HANDLE WINAPI Mine_CreateFileW(LPCWSTR a0,
     /* int nIndent = */ EnterFunc();
 
     if (create == OPEN_EXISTING) {
-        check_dependencies(a0);
+        if (dependency_stale(a0))
+            Print("Stale dependency!");
+            // TODO: run command line with Mine_CreateProcessW
     }
 
     HANDLE rv = 0;
