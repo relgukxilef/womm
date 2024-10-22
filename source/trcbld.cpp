@@ -124,8 +124,8 @@ unique_path working_directory;
 
 unique_path get_meta_file(const WCHAR* a0) {
     auto path_size = GetFullPathNameW(a0, 0, NULL, NULL);
-    auto size = path_size + sizeof(L".womm\\.womm") / sizeof(WCHAR);
-    unique_path shadow(size);
+    auto size = path_size;
+    unique_path shadow(size + sizeof(L".womm\\") / sizeof(WCHAR));
     WCHAR* file_name;
     GetFullPathNameW(a0, shadow.p.length, shadow.p.pointer, &file_name);
     wmemmove(
@@ -133,7 +133,7 @@ unique_path get_meta_file(const WCHAR* a0) {
     );
     wmemcpy(file_name, L".womm\\", 6);
     // TODO: why is the file extension not added?
-    wmemcpy(shadow.p.pointer + shadow.p.length - 6, L".womm", 6);
+    //wmemcpy(shadow.p.pointer + shadow.p.length - 6, L".womm", 6);
     return shadow;
 }
 
@@ -2516,7 +2516,7 @@ BOOL WINAPI Mine_CreateProcessW(LPCWSTR lpApplicationName,
         lpCommandLine = (LPWSTR)lpApplicationName;
     }
 
-    CHAR szProc[MAX_PATH];
+    CHAR szProc[1024]; // TODO: allocate dynamically or remove
     BOOL rv = 0;
     __try {
         LPPROCESS_INFORMATION ppi = lpProcessInformation;
@@ -3008,6 +3008,10 @@ BOOL WINAPI Mine_CreateDirectoryExW(LPCWSTR a0,
 }
 
 bool dependency_stale(LPCWSTR a0, FILETIME dependeeLastWriteTime={~0u, ~0u}) {
+    if (wcscmp(a0, L"CONOUT$") == 0)
+        return false;
+    if (wcscmp(a0, L"CONIN$") == 0)
+        return false;
     Print("Checking %le\n", a0);
     FILETIME lastWriteTime;
     auto file = Real_CreateFileW(
@@ -3152,9 +3156,9 @@ void recreate_dependency(LPCWSTR a0) {
 
     Real_CloseHandle(shadow_file);
 
-    STARTUPINFOW si{};
+    STARTUPINFOW si;
     ZeroMemory(&si, sizeof(si));
-    PROCESS_INFORMATION pi{};
+    PROCESS_INFORMATION pi;
     ZeroMemory(&pi, sizeof(pi));
     si.cb = sizeof(si);
     if(!Mine_CreateProcessW(
