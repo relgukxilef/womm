@@ -102,9 +102,13 @@ struct unique_path {
     }
     void append(const WCHAR *begin, const WCHAR *end) {
         auto length = (unsigned)(p.length + end - begin);
-        auto pointer = (WCHAR*)GlobalReAlloc(
-            p.pointer, length * sizeof(WCHAR), GMEM_MOVEABLE
-        );
+        WCHAR *pointer;
+        if (p.pointer)
+            pointer = (WCHAR*)GlobalReAlloc(
+                p.pointer, length * sizeof(WCHAR), GMEM_MOVEABLE
+            );
+        else 
+            pointer = (WCHAR*)GlobalAlloc(0, length * sizeof(WCHAR));
         if (pointer) {
             p = {pointer, length};
             wmemcpy(p.pointer, begin, end - begin);
@@ -116,6 +120,7 @@ struct unique_path {
 };
 
 unique_path command_line;
+unique_path working_directory;
 
 unique_path get_meta_file(const WCHAR* a0) {
     auto path_size = GetFullPathNameW(a0, 0, NULL, NULL);
@@ -1333,7 +1338,7 @@ PCWSTR FileNames::ParameterizeName(PWCHAR pwzDst, DWORD cMaxDst, FileInfo *pInfo
 
 PCWSTR FileNames::ParameterizeName(PWCHAR pwzDst, DWORD cMaxDst, PCWSTR pwzPath)
 {
-    if (PrefixMatch(pwzPath, s_wzSysPath)) {
+    /*if (PrefixMatch(pwzPath, s_wzSysPath)) {
         Copy(pwzDst, L"%SYSDIR%\\");
         Copy(pwzDst + Size(pwzDst), pwzPath + s_wcSysPath);
         goto finish;
@@ -1348,7 +1353,7 @@ PCWSTR FileNames::ParameterizeName(PWCHAR pwzDst, DWORD cMaxDst, PCWSTR pwzPath)
         Copy(pwzDst + Size(pwzDst), pwzPath + s_wcTmpPath);
         goto finish;
     }
-    else {
+    else */{
         Copy(pwzDst, pwzPath);
 
       finish:
@@ -1529,6 +1534,14 @@ VOID FileNames::Dump()
                 Real_WriteFile(
                     shadow_file, command_line.p.pointer, 
                     command_line.p.length * 2, 
+                    NULL, NULL
+                );
+                Real_WriteFile(
+                    shadow_file, L"\n", 2, NULL, NULL
+                );
+                Real_WriteFile(
+                    shadow_file, working_directory.p.pointer, 
+                    working_directory.p.length * 2, 
                     NULL, NULL
                 );
                 Real_WriteFile(
@@ -3026,37 +3039,134 @@ bool dependency_stale(LPCWSTR a0, FILETIME dependeeLastWriteTime={~0u, ~0u}) {
     
     DWORD charBufferSize = 4096;
     CHAR charBuffer[4096];
-    unique_path line(256);
-    while (
-        Real_ReadFile(
-            shadow_file, charBuffer, charBufferSize, &charBufferSize, NULL
-        ) &&
-        charBufferSize > 0
-    ) {
-        WCHAR *buffer = (WCHAR*)charBuffer;
-        auto start = buffer;
-        auto end = start;
-        DWORD bufferSize = charBufferSize / sizeof(WCHAR);
-        while (end != buffer + bufferSize) {
-            for (; end != buffer + bufferSize && *end != L'\n'; end++);
-            line.append(start, end);
-            if (*end == L'\n') {
-                if (line.p.length == 0)
-                    break;
-                *end = L'\0';
-                if (dependency_stale(line.p.pointer, lastWriteTime)) {
-                    Print("Dependency is stale\n");
-                    return true;
-                }
-                line.p.length = 0;
-                end++;
-                start = end;
-            }
+    unique_path line;
+    auto buffer = (WCHAR*)charBuffer;
+    auto bufferEnd = (WCHAR*)(charBuffer + charBufferSize);
+    auto begin = bufferEnd;
+    auto end = begin;
+    bool stale = false;
+
+    while (true) {
+        while (end != bufferEnd && *end != L'\n') {
+            end++;
         }
+
+        if (end != bufferEnd) {
+            *end = L'\0';
+            end++;
+            line.append(begin, end);
+
+            if (line.p.length == 1)
+                break;
+            
+            if (dependency_stale(line.p.pointer, lastWriteTime)) {
+                Print("Dependency is stale\n");
+                stale = true;
+                break;
+            }
+
+            line.p.length = 0;
+            begin = end;
+            continue;
+        }
+
+        line.append(begin, end);
+
+        if (!Real_ReadFile(
+            shadow_file, charBuffer, charBufferSize, &charBufferSize, NULL
+        ))
+            break;
+
+        if (charBufferSize == 0)
+            break;
+
+        begin = (WCHAR*)charBuffer;
+        bufferEnd = (WCHAR*)(charBuffer + charBufferSize);
+        end = begin;
     }
-    Print("All dependencies up-to-date\n");
-    Real_CloseHandle(shadow_file); // TODO: put into destructor
-    return false;
+
+    Real_CloseHandle(shadow_file);
+    return stale;
+}
+
+void recreate_dependency(LPCWSTR a0) {
+    auto shadow_file = Real_CreateFileW(
+        get_meta_file(a0).p.pointer, GENERIC_READ, FILE_SHARE_READ, NULL, 
+        OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL
+    );
+    if (shadow_file == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    
+    DWORD charBufferSize = 4096;
+    CHAR charBuffer[4096];
+    unique_path line;
+    unique_path command_line;
+    unique_path working_directory;
+    auto buffer = (WCHAR*)charBuffer;
+    auto bufferEnd = (WCHAR*)(charBuffer + charBufferSize);
+    auto begin = bufferEnd;
+    auto end = begin;
+    bool stale = false;
+    unsigned section = 0;
+
+    while (true) {
+        while (end != bufferEnd && *end != L'\n') {
+            end++;
+        }
+
+        if (end != bufferEnd) {
+            *end = L'\0';
+            end++;
+            line.append(begin, end);
+
+            if (section == 1) {
+                if (!command_line.p.pointer)
+                    command_line.swap(line);
+                else if (!working_directory.p.pointer)
+                    working_directory.swap(line);
+            }
+
+            if (line.p.length == 1)
+                section++;
+            
+            line.p.length = 0;
+            begin = end;
+            continue;
+        }
+
+        line.append(begin, end);
+
+        if (!Real_ReadFile(
+            shadow_file, charBuffer, charBufferSize, &charBufferSize, NULL
+        ))
+            break;
+
+        if (charBufferSize == 0)
+            break;
+
+        begin = (WCHAR*)charBuffer;
+        bufferEnd = (WCHAR*)(charBuffer + charBufferSize);
+        end = begin;
+    }
+
+    Real_CloseHandle(shadow_file);
+
+    STARTUPINFOW si{};
+    ZeroMemory(&si, sizeof(si));
+    PROCESS_INFORMATION pi{};
+    ZeroMemory(&pi, sizeof(pi));
+    si.cb = sizeof(si);
+    if(!Mine_CreateProcessW(
+        NULL, command_line.p.pointer, NULL, NULL, false, 0, NULL, 
+        working_directory.p.pointer, &si, &pi
+    )) {
+        return;
+    }
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    Real_CloseHandle(pi.hProcess);
+    Real_CloseHandle(pi.hThread);
 }
 
 HANDLE WINAPI Mine_CreateFileW(LPCWSTR a0,
@@ -3069,10 +3179,9 @@ HANDLE WINAPI Mine_CreateFileW(LPCWSTR a0,
 {
     /* int nIndent = */ EnterFunc();
 
-    if (create == OPEN_EXISTING) {
-        if (dependency_stale(a0))
-            Print("Stale dependency!");
-            // TODO: run command line with Mine_CreateProcessW
+    if (create == OPEN_EXISTING && dependency_stale(a0)) {
+        Print("Stale dependency!");
+        recreate_dependency(a0);
     }
 
     HANDLE rv = 0;
@@ -4657,6 +4766,12 @@ int WINAPI Mine_EntryPoint(VOID)
         if (dwSize > 0 && dwSize < ARRAYSIZE(szExeName)) {
             Tblog("<t:Directory>%hs</t:Directory>\n", szExeName);
         }
+
+        working_directory = {GetCurrentDirectoryW(0, NULL)};
+        GetCurrentDirectoryW(
+            working_directory.p.length, working_directory.p.pointer
+        );
+        working_directory.p.length--; // remove \0
 
         // Get the real executable name.
         wzPath[0] = '\0';
