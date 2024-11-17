@@ -1502,7 +1502,11 @@ VOID FileNames::Dump()
             continue;
         }
 
-        if (fWrite) {
+        if (fWrite && fRead) {
+            Print("Files that are read and written are not supported yet.");
+        }
+
+        if (fWrite && !fRead) {
             auto shadow = get_meta_file(wzPath);
             auto last_slash = wcsrchr(shadow.p.pointer, L'\\');
             *last_slash = L'\0';
@@ -3165,6 +3169,7 @@ void recreate_dependency(LPCWSTR a0) {
         NULL, command_line.p.pointer, NULL, NULL, false, 0, NULL, 
         working_directory.p.pointer, &si, &pi
     )) {
+        Print("Recreating dependency failed!");
         return;
     }
 
